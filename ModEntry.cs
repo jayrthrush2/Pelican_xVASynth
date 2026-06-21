@@ -83,8 +83,9 @@ namespace Pelican_XVASynth
                     mod: ModManifest,
                     text: () => "Voices"
                 );
+                
                 var voiceStrings = new Dictionary<string, string>();
-                voiceStrings.Add("","none");
+                voiceStrings.Add("none:none", "none");
                 foreach (var kvp in gameVoices.games)
                 {
                     foreach(var v in kvp.Value)
@@ -117,18 +118,42 @@ namespace Pelican_XVASynth
                     getValue: () => Config.MaxLettersToPrepare,
                     setValue: value => Config.MaxLettersToPrepare = value
                 ); 
+
+                // Pre-populate missing config configurations as safe defaults natively
+                bool modifiedConfig = false;
+                var characters = Helper.GameContent.Load<Dictionary<string, CharacterData>>("Data\\Characters");
+                foreach (var characterName in characters.Keys)
+                {
+                    if (!Config.Voices.ContainsKey(characterName))
+                    {
+                        Config.Voices[characterName] = new VoiceSetup { Game = "none", Voice = "none" };
+                        modifiedConfig = true;
+                    }
+                }
+
+                if (modifiedConfig)
+                {
+                    Helper.WriteConfig(Config);
+                }
                 
-                foreach (var kvp in Helper.GameContent.Load<Dictionary<string, CharacterData>>("Data\\Characters"))
+                foreach (var kvp in characters)
                 {
                     configMenu.AddTextOption(
                         mod: ModManifest,
                         name: () => kvp.Key,
-                        getValue: () => Config.Voices.ContainsKey(kvp.Key) ? Config.Voices[kvp.Key].Game + ":" + Config.Voices[kvp.Key].Voice : "",
+                        getValue: () => {
+                            if (Config.Voices.ContainsKey(kvp.Key))
+                            {
+                                string keyVal = Config.Voices[kvp.Key].Game + ":" + Config.Voices[kvp.Key].Voice;
+                                return voiceStrings.ContainsKey(keyVal) ? keyVal : "none:none";
+                            }
+                            return "none:none";
+                        },
                         setValue: delegate (string value) {
                             var parts = value.Split(':');
-                            if (parts.Length != 2)
+                            if (parts.Length != 2 || (parts[0] == "none" && parts[1] == "none"))
                             {
-                                Config.Voices.Remove(kvp.Key);
+                                Config.Voices[kvp.Key] = new VoiceSetup { Game = "none", Voice = "none" };
                             }
                             else
                             {
@@ -137,7 +162,7 @@ namespace Pelican_XVASynth
                             Helper.WriteConfig(Config);
                         },
                         allowedValues: voiceStrings.Keys.ToArray(),
-                        formatAllowedValue: delegate (string value) { return voiceStrings[value]; }
+                        formatAllowedValue: delegate (string value) { return voiceStrings.ContainsKey(value) ? voiceStrings[value] : "none"; }
                     );
                 }
             }
@@ -230,18 +255,31 @@ namespace Pelican_XVASynth
         public static void PlayDialogue(string name, string dialogue) {
             if (!Config.Voices.ContainsKey(name))
             {
-                SMonitor.Log($"No game voice set for {name}");
                 return;
             }
+            
             VoiceSetup voice = Config.Voices[name];
+            
+            // Fault-tolerant Check: If config lists "none", safely bail without playing
+            if (voice.Game == "none" || voice.Voice == "none")
+            {
+                return;
+            }
+
+            // Resistance Handling: Check if the assigned engine profile exists in memory
             if (!gameVoices.games.ContainsKey(voice.Game))
             {
-                SMonitor.Log($"Game {voice.Game} not found for {name}", LogLevel.Warn);
+                SMonitor.Log($"Voice profiles for game '{voice.Game}' (assigned to {name}) are missing from xVASynth. Skipping synthesis.", LogLevel.Warn);
+                return;
             }
+            
+            // Check if the individual model profile is currently accessible
             if (!gameVoices.games[voice.Game].Exists(v => v.id == voice.Voice))
             {
-                SMonitor.Log($"Voice {voice.Voice} for game {voice.Game} not found for {name}", LogLevel.Warn);
+                SMonitor.Log($"Voice model ID '{voice.Voice}' (assigned to {name}) is missing from xVASynth. Skipping synthesis.", LogLevel.Warn);
+                return;
             }
+            
             SendToXVASynth(voice, dialogue);
         }
 
