@@ -119,14 +119,13 @@ namespace Pelican_XVASynth
                     setValue: value => Config.MaxLettersToPrepare = value
                 ); 
 
-                // Pre-populate missing config configurations as safe defaults natively
                 bool modifiedConfig = false;
                 var characters = Helper.GameContent.Load<Dictionary<string, CharacterData>>("Data\\Characters");
                 foreach (var characterName in characters.Keys)
                 {
                     if (!Config.Voices.ContainsKey(characterName))
                     {
-                        Config.Voices[characterName] = new VoiceSetup { Game = "none", Voice = "none" };
+                        Config.Voices[characterName] = new VoiceSetup { Game = "none", Voice = "none", Pitch = 0.0f };
                         modifiedConfig = true;
                     }
                 }
@@ -140,7 +139,7 @@ namespace Pelican_XVASynth
                 {
                     configMenu.AddTextOption(
                         mod: ModManifest,
-                        name: () => kvp.Key,
+                        name: () => $"{kvp.Key} Voice",
                         getValue: () => {
                             if (Config.Voices.ContainsKey(kvp.Key))
                             {
@@ -151,18 +150,41 @@ namespace Pelican_XVASynth
                         },
                         setValue: delegate (string value) {
                             var parts = value.Split(':');
+                            if (!Config.Voices.ContainsKey(kvp.Key))
+                                Config.Voices[kvp.Key] = new VoiceSetup();
+
                             if (parts.Length != 2 || (parts[0] == "none" && parts[1] == "none"))
                             {
-                                Config.Voices[kvp.Key] = new VoiceSetup { Game = "none", Voice = "none" };
+                                Config.Voices[kvp.Key].Game = "none";
+                                Config.Voices[kvp.Key].Voice = "none";
                             }
                             else
                             {
-                                Config.Voices[kvp.Key] = new VoiceSetup { Game = parts[0], Voice = parts[1] };
+                                Config.Voices[kvp.Key].Game = parts[0];
+                                Config.Voices[kvp.Key].Voice = parts[1];
                             }
                             Helper.WriteConfig(Config);
                         },
                         allowedValues: voiceStrings.Keys.ToArray(),
                         formatAllowedValue: delegate (string value) { return voiceStrings.ContainsKey(value) ? voiceStrings[value] : "none"; }
+                    );
+
+                    // Dynamic Pitch Customizer Slider option added under each character name
+                    configMenu.AddNumberOption(
+                        mod: ModManifest,
+                        name: () => $"{kvp.Key} Pitch",
+                        tooltip: () => $"Alter the vocal pitch frequency for {kvp.Key} (-1.0 base octave to 1.0 high octave)",
+                        getValue: () => Config.Voices.ContainsKey(kvp.Key) ? Config.Voices[kvp.Key].Pitch : 0.0f,
+                        setValue: value => {
+                            if (!Config.Voices.ContainsKey(kvp.Key))
+                                Config.Voices[kvp.Key] = new VoiceSetup { Game = "none", Voice = "none" };
+
+                            Config.Voices[kvp.Key].Pitch = value;
+                            Helper.WriteConfig(Config);
+                        },
+                        min: -1.0f,
+                        max: 1.0f,
+                        interval: 0.05f
                     );
                 }
             }
@@ -260,20 +282,17 @@ namespace Pelican_XVASynth
             
             VoiceSetup voice = Config.Voices[name];
             
-            // Fault-tolerant Check: If config lists "none", safely bail without playing
             if (voice.Game == "none" || voice.Voice == "none")
             {
                 return;
             }
 
-            // Resistance Handling: Check if the assigned engine profile exists in memory
             if (!gameVoices.games.ContainsKey(voice.Game))
             {
                 SMonitor.Log($"Voice profiles for game '{voice.Game}' (assigned to {name}) are missing from xVASynth. Skipping synthesis.", LogLevel.Warn);
                 return;
             }
             
-            // Check if the individual model profile is currently accessible
             if (!gameVoices.games[voice.Game].Exists(v => v.id == voice.Voice))
             {
                 SMonitor.Log($"Voice model ID '{voice.Voice}' (assigned to {name}) is missing from xVASynth. Skipping synthesis.", LogLevel.Warn);
@@ -328,10 +347,10 @@ namespace Pelican_XVASynth
                 serializer.Serialize(file, text);
             }
             
-            CheckForWav(requestId, 0);
+            CheckForWav(requestId, 0, voice.Pitch);
         }
 
-        public static async void CheckForWav(int requestId, int currentTicks)
+        public static async void CheckForWav(int requestId, int currentTicks, float pitch)
         {
             string wavPath = Path.Combine(xVaSynthPath, "output.wav");
             if (File.Exists(wavPath))
@@ -355,11 +374,10 @@ namespace Pelican_XVASynth
                 catch (IOException)
                 {
                     await Task.Delay(50);
-                    CheckForWav(requestId, currentTicks);
+                    CheckForWav(requestId, currentTicks, pitch);
                     return;
                 }
-                catch (Exception e)
-                {
+                catch (Exception e) {
                     SMonitor.Log($"Error processing audio: {e.Message}", LogLevel.Error);
                 }
 
@@ -374,10 +392,11 @@ namespace Pelican_XVASynth
                     try
                     {
                         activeVoiceInstance = voiceSound.CreateInstance();
+                        // Dynamically scale pitch natively right before hitting the sound hardware
+                        activeVoiceInstance.Pitch = Math.Max(-1.0f, Math.Min(1.0f, pitch));
                         activeVoiceInstance.Play();
                     }
-                    catch (Exception e)
-                    {
+                    catch (Exception e) {
                         SMonitor.Log($"Error playing sound instance: {e.Message}", LogLevel.Error);
                     }
                     
@@ -399,7 +418,7 @@ namespace Pelican_XVASynth
                 return;
             }
             
-            CheckForWav(requestId, currentTicks);
+            CheckForWav(requestId, currentTicks, pitch);
         }
     }
 }
