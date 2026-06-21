@@ -22,14 +22,14 @@ namespace Pelican_XVASynth
         public static ModConfig Config;
 
         public static ModEntry context;
-
+        
         public static Harmony harmony;
         public static GameVoices gameVoices = new GameVoices();
         public static readonly string xVaSynthPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "xVASynth", "realTimeTTS");
         public static SoundEffect voiceSound;
-        public static SoundEffectInstance activeVoiceInstance; // Track active audio playback
-        public static int currentRequestId = 0; // Track active request session
-        public static Dictionary<string, GameVoice> voiceDict = new Dictionary<string, GameVoice>();
+        public static SoundEffectInstance activeVoiceInstance;
+        public static int currentRequestId = 0;
+        private static int beforeClickDialogueIndex = -1;
 
         /// <summary>The mod entry point, called after the mod is first loaded.</summary>
         /// <param name="helper">Provides simplified APIs for writing mods.</param>
@@ -53,8 +53,7 @@ namespace Pelican_XVASynth
                original: AccessTools.Constructor(typeof(DialogueBox), new Type[] { typeof(Dialogue) }),
                postfix: new HarmonyMethod(typeof(ModEntry), nameof(ModEntry.DialogueBox_Ctor_Postfix))
             );
-
-            // Added Prefix to intercept skips before dialogue advances or closes
+            
             harmony.Patch(
                original: AccessTools.Method(typeof(DialogueBox), nameof(DialogueBox.receiveLeftClick)),
                prefix: new HarmonyMethod(typeof(ModEntry), nameof(ModEntry.DialogueBox_receiveLeftClick_Prefix)),
@@ -85,10 +84,10 @@ namespace Pelican_XVASynth
                     text: () => "Voices"
                 );
                 var voiceStrings = new Dictionary<string, string>();
-                voiceStrings.Add("", "none");
+                voiceStrings.Add("","none");
                 foreach (var kvp in gameVoices.games)
                 {
-                    foreach (var v in kvp.Value)
+                    foreach(var v in kvp.Value)
                     {
                         voiceStrings[kvp.Key + ":" + v.id] = $"{v.name} ({kvp.Key})";
                     }
@@ -117,23 +116,25 @@ namespace Pelican_XVASynth
                     tooltip: () => "Only pause to prepare if the number of letters in the string is equal to or smaller than this.",
                     getValue: () => Config.MaxLettersToPrepare,
                     setValue: value => Config.MaxLettersToPrepare = value
-                );
-
+                ); 
+                
                 foreach (var kvp in Helper.GameContent.Load<Dictionary<string, CharacterData>>("Data\\Characters"))
                 {
                     configMenu.AddTextOption(
                         mod: ModManifest,
                         name: () => kvp.Key,
-                        getValue: () => voiceDict.ContainsKey(kvp.Key) ? voiceDict[kvp.Key].game + ":" + voiceDict[kvp.Key].id : "",
+                        getValue: () => Config.Voices.ContainsKey(kvp.Key) ? Config.Voices[kvp.Key].Game + ":" + Config.Voices[kvp.Key].Voice : "",
                         setValue: delegate (string value) {
                             var parts = value.Split(':');
                             if (parts.Length != 2)
                             {
-                                voiceDict.Remove(kvp.Key);
-                                return;
+                                Config.Voices.Remove(kvp.Key);
                             }
-                            voiceDict[kvp.Key] = new GameVoice(parts[0], parts[1]);
-                            SaveGameVoices();
+                            else
+                            {
+                                Config.Voices[kvp.Key] = new VoiceSetup { Game = parts[0], Voice = parts[1] };
+                            }
+                            Helper.WriteConfig(Config);
                         },
                         allowedValues: voiceStrings.Keys.ToArray(),
                         formatAllowedValue: delegate (string value) { return voiceStrings[value]; }
@@ -142,16 +143,6 @@ namespace Pelican_XVASynth
             }
 
             Helper.Events.GameLoop.OneSecondUpdateTicked -= GameLoop_OneSecondUpdateTicked;
-        }
-
-        private void SaveGameVoices()
-        {
-            List<string> output = new List<string>();
-            foreach (var kvp in voiceDict)
-            {
-                output.Add($"{kvp.Key}:{kvp.Value.game}:{kvp.Value.id}");
-            }
-            Config.NPCGameVoices = string.Join(",", output);
         }
 
         private void LoadGameVoices()
@@ -175,13 +166,6 @@ namespace Pelican_XVASynth
                 }
                 Monitor.Log($"Loaded {count} voices for {gameVoices.games.Count} games", LogLevel.Debug);
             }
-            foreach (var ss in Config.NPCGameVoices.Split(','))
-            {
-                var ngv = ss.Split(':');
-                if (ngv.Length != 3)
-                    continue;
-                voiceDict[ngv[0]] = new GameVoice(ngv[1], ngv[2]);
-            }
         }
 
         public static void DialogueBox_Ctor_Postfix(Dialogue dialogue)
@@ -189,28 +173,22 @@ namespace Pelican_XVASynth
             PlayDialogue(dialogue);
         }
 
-        // State tracking variable
-        private static int beforeClickDialogueIndex = -1;
-
         public static void DialogueBox_receiveLeftClick_Prefix(DialogueBox __instance)
         {
             if (__instance.transitioning || __instance.characterDialogue == null)
                 return;
 
-            // Record the page index before the click is processed
             beforeClickDialogueIndex = __instance.characterDialogue.currentDialogueIndex;
         }
 
         public static void DialogueBox_receiveLeftClick_Postfix(DialogueBox __instance)
         {
-            // Scenario A: Dialogue box closed entirely or dialogue reference was cleared
             if (__instance.characterDialogue == null)
             {
                 CancelCurrentVoice();
                 return;
             }
 
-            // Scenario B: Dialogue advanced to a new page
             if (__instance.characterDialogue.currentDialogueIndex != beforeClickDialogueIndex)
             {
                 CancelCurrentVoice();
@@ -218,12 +196,11 @@ namespace Pelican_XVASynth
                 if (!__instance.transitioning)
                     PlayDialogue(__instance.characterDialogue);
             }
-            // Scenario C: Click just finished text scrolling on the same page -> Do nothing, let audio continue
         }
 
         public static void CancelCurrentVoice()
         {
-            currentRequestId++; // Invalidates any older running CheckForWav loops
+            currentRequestId++;
             currentDialogue = "";
 
             if (activeVoiceInstance != null)
@@ -242,7 +219,7 @@ namespace Pelican_XVASynth
         }
 
         public static string currentDialogue = "";
-
+        
         public static void PlayDialogue(Dialogue dialogue)
         {
             if (!Config.EnableMod || dialogue.speaker == null || dialogue.dialogues[dialogue.currentDialogueIndex].Text == currentDialogue)
@@ -250,47 +227,45 @@ namespace Pelican_XVASynth
             PlayDialogue(dialogue.speaker.Name, dialogue.dialogues[dialogue.currentDialogueIndex].Text);
         }
 
-        public static void PlayDialogue(string name, string dialogue)
-        {
-            if (!voiceDict.ContainsKey(name))
+        public static void PlayDialogue(string name, string dialogue) {
+            if (!Config.Voices.ContainsKey(name))
             {
                 SMonitor.Log($"No game voice set for {name}");
                 return;
             }
-            GameVoice voice = voiceDict[name];
-            if (!gameVoices.games.ContainsKey(voice.game))
+            VoiceSetup voice = Config.Voices[name];
+            if (!gameVoices.games.ContainsKey(voice.Game))
             {
-                SMonitor.Log($"Game {voice.game} not found for {name}", LogLevel.Warn);
+                SMonitor.Log($"Game {voice.Game} not found for {name}", LogLevel.Warn);
             }
-            if (!gameVoices.games[voice.game].Exists(v => v.id == voice.id))
+            if (!gameVoices.games[voice.Game].Exists(v => v.id == voice.Voice))
             {
-                SMonitor.Log($"Voice {voice.id} for game {voice.game} not found for {name}", LogLevel.Warn);
+                SMonitor.Log($"Voice {voice.Voice} for game {voice.Game} not found for {name}", LogLevel.Warn);
             }
             SendToXVASynth(voice, dialogue);
         }
 
-        private static async void SendToXVASynth(GameVoice voice, string dialogue)
+        private static async void SendToXVASynth(VoiceSetup voice, string dialogue)
         {
-            // Cancel any active line before submitting a new request
             CancelCurrentVoice();
 
             int requestId = currentRequestId;
             currentDialogue = dialogue;
-            SMonitor.Log($"Sending speech {dialogue} for voice {voice.id}, game {voice.game} to xVASynth (Req ID: {requestId})");
-
+            SMonitor.Log($"Sending speech {dialogue} for voice {voice.Voice}, game {voice.Game} to xVASynth (Req ID: {requestId})");
+            
             GameVoiceText text = new GameVoiceText()
             {
-                gameId = voice.game,
-                voiceId = voice.id,
+                gameId = voice.Game,
+                voiceId = voice.Voice,
                 vol = 1f,
                 text = ""
             };
-
+            
             if (File.Exists(Path.Combine(xVaSynthPath, "output.wav")))
             {
                 try { File.Delete(Path.Combine(xVaSynthPath, "output.wav")); } catch { }
             }
-
+            
             string speechPath = Path.Combine(xVaSynthPath, "xVASynthText.json");
             using (StreamWriter file = File.CreateText(speechPath))
             {
@@ -304,8 +279,7 @@ namespace Pelican_XVASynth
             {
                 await Task.Delay(Config.MillisecondsPrepare);
             }
-
-            // Double check if canceled during the delay
+            
             if (requestId != currentRequestId)
                 return;
 
@@ -315,7 +289,7 @@ namespace Pelican_XVASynth
                 JsonSerializer serializer = new JsonSerializer();
                 serializer.Serialize(file, text);
             }
-
+            
             CheckForWav(requestId, 0);
         }
 
@@ -324,11 +298,9 @@ namespace Pelican_XVASynth
             string wavPath = Path.Combine(xVaSynthPath, "output.wav");
             if (File.Exists(wavPath))
             {
-                // If the dialogue was skipped/changed while this file was generating,
-                // delete it immediately so it doesn't clutter or conflict with newer requests.
                 if (requestId != currentRequestId)
                 {
-                    try { File.Delete(wavPath); } catch { /* File is locked by xVASynth writing it; ignore and let it clear later */ }
+                    try { File.Delete(wavPath); } catch { }
                     return;
                 }
 
@@ -344,8 +316,6 @@ namespace Pelican_XVASynth
                 }
                 catch (IOException)
                 {
-                    // File is locked by another process (xVASynth still writing).
-                    // Instead of crashing, wait 50ms and try again on the next loop tick.
                     await Task.Delay(50);
                     CheckForWav(requestId, currentTicks);
                     return;
@@ -372,7 +342,7 @@ namespace Pelican_XVASynth
                     {
                         SMonitor.Log($"Error playing sound instance: {e.Message}", LogLevel.Error);
                     }
-
+                    
                     try { File.Delete(wavPath); } catch { }
                 }
                 return;
@@ -380,7 +350,7 @@ namespace Pelican_XVASynth
 
             await Task.Delay(100);
             currentTicks++;
-
+            
             if (currentTicks / 10f > Config.MaxSecondsWait)
             {
                 if (requestId == currentRequestId)
@@ -390,7 +360,7 @@ namespace Pelican_XVASynth
                 }
                 return;
             }
-
+            
             CheckForWav(requestId, currentTicks);
         }
     }
