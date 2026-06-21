@@ -170,12 +170,13 @@ namespace Pelican_XVASynth
                     );
 
                     // Dynamic Pitch Customizer Slider option added under each character name
+                    // Fixed explicitly typed generic <float> AddNumberOption call
                     configMenu.AddNumberOption(
                         mod: ModManifest,
                         name: () => $"{kvp.Key} Pitch",
                         tooltip: () => $"Alter the vocal pitch frequency for {kvp.Key} (-1.0 base octave to 1.0 high octave)",
                         getValue: () => Config.Voices.ContainsKey(kvp.Key) ? Config.Voices[kvp.Key].Pitch : 0.0f,
-                        setValue: value => {
+                        setValue: (float value) => {
                             if (!Config.Voices.ContainsKey(kvp.Key))
                                 Config.Voices[kvp.Key] = new VoiceSetup { Game = "none", Voice = "none" };
 
