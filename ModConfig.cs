@@ -9,7 +9,6 @@ namespace Pelican_XVASynth
         public int MillisecondsPrepare { get; set; } = 1500;
         public int MaxLettersToPrepare { get; set; } = 200;
 
-        // Structured JSON block for voices instead of the long string line
         public Dictionary<string, VoiceSetup> Voices { get; set; } = new Dictionary<string, VoiceSetup>();
     }
 
@@ -17,5 +16,6 @@ namespace Pelican_XVASynth
     {
         public string Voice { get; set; } = "";
         public string Game { get; set; } = "";
+        public float Pitch { get; set; } = 0.0f; // Added field for dynamic frequency tweaking
     }
 }
