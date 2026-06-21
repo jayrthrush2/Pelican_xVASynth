@@ -1,9 +1,10 @@
-﻿{
+{
   "Name": "Pelican xVASynth",
-  "Author": "Nahlbrii",
-  "Version": "0.3.5",
+  "Author": "aedenthorn and Nahlbrii",
+  "Version": "1.0.0",
   "Description": "xVASynth Text to Speech",
   "UniqueID": "Nahlbrii.Pelican_XVASynth",
   "EntryDll": "Pelican XVASynth.dll",
-  "MinimumApiVersion": "4.4.0"
+  "MinimumApiVersion": "4.4.0",
+  "UpdateKeys": [ "Nexus:48017" ]
 }
