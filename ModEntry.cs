@@ -137,57 +137,74 @@ namespace Pelican_XVASynth
                 
                 foreach (var kvp in characters)
                 {
+                    if (!Config.Voices.ContainsKey(kvp.Key))
+                        Config.Voices[kvp.Key] = new VoiceSetup { Game = "none", Voice = "none", Pitch = 0.0f };
+
+                    VoiceSetup characterVoice = Config.Voices[kvp.Key];
+
+                    // 1. Game Selection Dropdown
+                    var allowedGames = new List<string> { "none" };
+                    allowedGames.AddRange(gameVoices.games.Keys);
+
+                    configMenu.AddTextOption(
+                        mod: ModManifest,
+                        name: () => $"{kvp.Key} Game",
+                        tooltip: () => $"Select the voice model game database for {kvp.Key}",
+                        getValue: () => characterVoice.Game,
+                        setValue: (string value) => {
+                            characterVoice.Game = value;
+                            // Reset the voice to none if the game changes to avoid cross-game config corruption
+                            characterVoice.Voice = "none";
+                            Helper.WriteConfig(Config);
+                        },
+                        allowedValues: allowedGames.ToArray()
+                    );
+
+                    // 2. Dynamic Voice Selection Dropdown based on chosen Game
                     configMenu.AddTextOption(
                         mod: ModManifest,
                         name: () => $"{kvp.Key} Voice",
-                        getValue: () => {
-                            if (Config.Voices.ContainsKey(kvp.Key))
-                            {
-                                string keyVal = Config.Voices[kvp.Key].Game + ":" + Config.Voices[kvp.Key].Voice;
-                                return voiceStrings.ContainsKey(keyVal) ? keyVal : "none:none";
-                            }
-                            return "none:none";
-                        },
-                        setValue: delegate (string value) {
-                            var parts = value.Split(':');
-                            if (!Config.Voices.ContainsKey(kvp.Key))
-                                Config.Voices[kvp.Key] = new VoiceSetup();
-
-                            if (parts.Length != 2 || (parts[0] == "none" && parts[1] == "none"))
-                            {
-                                Config.Voices[kvp.Key].Game = "none";
-                                Config.Voices[kvp.Key].Voice = "none";
-                            }
-                            else
-                            {
-                                Config.Voices[kvp.Key].Game = parts[0];
-                                Config.Voices[kvp.Key].Voice = parts[1];
-                            }
+                        tooltip: () => $"Select the specific xVASynth voice model from {characterVoice.Game}",
+                        getValue: () => characterVoice.Voice,
+                        setValue: (string value) => {
+                            characterVoice.Voice = value;
                             Helper.WriteConfig(Config);
                         },
-                        allowedValues: voiceStrings.Keys.ToArray(),
-                        formatAllowedValue: delegate (string value) { return voiceStrings.ContainsKey(value) ? voiceStrings[value] : "none"; }
+                        allowedValues: () => {
+                            // Dynamically build the allowed model IDs list based on the currently selected game
+                            var allowedModels = new List<string> { "none" };
+                            if (gameVoices.games.ContainsKey(characterVoice.Game))
+                            {
+                                foreach (var model in gameVoices.games[characterVoice.Game])
+                                {
+                                    allowedModels.Add(model.id);
+                                }
+                            }
+                            return allowedModels.ToArray();
+                        },
+                        formatAllowedValue: (string value) => {
+                            if (value == "none") return "none";
+                            // Human-readable lookup: returns "Model Name" instead of the raw internal "model_id" string
+                            if (gameVoices.games.ContainsKey(characterVoice.Game))
+                            {
+                                var foundModel = gameVoices.games[characterVoice.Game].FirstOrDefault(m => m.id == value);
+                                if (foundModel != null)
+                                {
+                                    return foundModel.name;
+                                }
+                            }
+                            return value;
+                        }
                     );
 
-                    // Fixed: GMCM handles integer sliders, converted to/from float config variables
+                    // 3. Pitch Slider Customizer
                     configMenu.AddNumberOption(
                         mod: ModManifest,
                         name: () => $"{kvp.Key} Pitch",
                         tooltip: () => $"Alter the vocal pitch frequency for {kvp.Key} (-100 lowest to 100 highest)",
-                        getValue: () => {
-                            if (Config.Voices.ContainsKey(kvp.Key))
-                            {
-                                // Multiply by 100 and cast to int for GMCM display
-                                return (int)(Config.Voices[kvp.Key].Pitch * 100f);
-                            }
-                            return 0;
-                        },
+                        getValue: () => (int)(characterVoice.Pitch * 100f),
                         setValue: (int value) => {
-                            if (!Config.Voices.ContainsKey(kvp.Key))
-                                Config.Voices[kvp.Key] = new VoiceSetup { Game = "none", Voice = "none" };
-
-                            // Divide by 100.0f to store as a clean decimal float in config
-                            Config.Voices[kvp.Key].Pitch = value / 100f;
+                            characterVoice.Pitch = value / 100f;
                             Helper.WriteConfig(Config);
                         },
                         min: -100,
