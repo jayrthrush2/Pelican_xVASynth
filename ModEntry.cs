@@ -328,33 +328,53 @@ namespace Pelican_XVASynth
                 // delete it immediately so it doesn't clutter or conflict with newer requests.
                 if (requestId != currentRequestId)
                 {
-                    try { File.Delete(wavPath); } catch { }
+                    try { File.Delete(wavPath); } catch { /* File is locked by xVASynth writing it; ignore and let it clear later */ }
                     return;
                 }
 
                 SMonitor.Log($"Playing output.wav file");
+                bool playSuccessful = false;
                 try
                 {
-                    using (FileStream fs = new FileStream(wavPath, FileMode.Open, FileAccess.Read))
+                    using (FileStream fs = new FileStream(wavPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                     {
                         voiceSound = SoundEffect.FromStream(fs);
                     }
-
-                    if (requestId != currentRequestId)
-                    {
-                        try { File.Delete(wavPath); } catch { }
-                        return;
-                    }
-
-                    activeVoiceInstance = voiceSound.CreateInstance();
-                    activeVoiceInstance.Play();
+                    playSuccessful = true;
+                }
+                catch (IOException)
+                {
+                    // File is locked by another process (xVASynth still writing).
+                    // Instead of crashing, wait 50ms and try again on the next loop tick.
+                    await Task.Delay(50);
+                    CheckForWav(requestId, currentTicks);
+                    return;
                 }
                 catch (Exception e)
                 {
                     SMonitor.Log($"Error processing audio: {e.Message}", LogLevel.Error);
                 }
 
-                try { File.Delete(wavPath); } catch { }
+                if (playSuccessful)
+                {
+                    if (requestId != currentRequestId)
+                    {
+                        try { File.Delete(wavPath); } catch { }
+                        return;
+                    }
+
+                    try
+                    {
+                        activeVoiceInstance = voiceSound.CreateInstance();
+                        activeVoiceInstance.Play();
+                    }
+                    catch (Exception e)
+                    {
+                        SMonitor.Log($"Error playing sound instance: {e.Message}", LogLevel.Error);
+                    }
+
+                    try { File.Delete(wavPath); } catch { }
+                }
                 return;
             }
 
