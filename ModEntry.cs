@@ -169,23 +169,30 @@ namespace Pelican_XVASynth
                         formatAllowedValue: delegate (string value) { return voiceStrings.ContainsKey(value) ? voiceStrings[value] : "none"; }
                     );
 
-                    // Dynamic Pitch Customizer Slider option added under each character name
-                    // Fixed explicitly typed generic <float> AddNumberOption call
+                    // Fixed: GMCM handles integer sliders, converted to/from float config variables
                     configMenu.AddNumberOption(
                         mod: ModManifest,
                         name: () => $"{kvp.Key} Pitch",
-                        tooltip: () => $"Alter the vocal pitch frequency for {kvp.Key} (-1.0 base octave to 1.0 high octave)",
-                        getValue: () => Config.Voices.ContainsKey(kvp.Key) ? Config.Voices[kvp.Key].Pitch : 0.0f,
-                        setValue: (float value) => {
+                        tooltip: () => $"Alter the vocal pitch frequency for {kvp.Key} (-100 lowest to 100 highest)",
+                        getValue: () => {
+                            if (Config.Voices.ContainsKey(kvp.Key))
+                            {
+                                // Multiply by 100 and cast to int for GMCM display
+                                return (int)(Config.Voices[kvp.Key].Pitch * 100f);
+                            }
+                            return 0;
+                        },
+                        setValue: (int value) => {
                             if (!Config.Voices.ContainsKey(kvp.Key))
                                 Config.Voices[kvp.Key] = new VoiceSetup { Game = "none", Voice = "none" };
 
-                            Config.Voices[kvp.Key].Pitch = value;
+                            // Divide by 100.0f to store as a clean decimal float in config
+                            Config.Voices[kvp.Key].Pitch = value / 100f;
                             Helper.WriteConfig(Config);
                         },
-                        min: -1.0f,
-                        max: 1.0f,
-                        interval: 0.05f
+                        min: -100,
+                        max: 100,
+                        interval: 5
                     );
                 }
             }
