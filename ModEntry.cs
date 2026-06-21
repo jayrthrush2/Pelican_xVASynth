@@ -22,7 +22,7 @@ namespace Pelican_XVASynth
         public static ModConfig Config;
 
         public static ModEntry context;
-        
+
         public static Harmony harmony;
         public static GameVoices gameVoices = new GameVoices();
         public static readonly string xVaSynthPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "xVASynth", "realTimeTTS");
@@ -53,7 +53,7 @@ namespace Pelican_XVASynth
                original: AccessTools.Constructor(typeof(DialogueBox), new Type[] { typeof(Dialogue) }),
                postfix: new HarmonyMethod(typeof(ModEntry), nameof(ModEntry.DialogueBox_Ctor_Postfix))
             );
-            
+
             harmony.Patch(
                original: AccessTools.Method(typeof(DialogueBox), nameof(DialogueBox.receiveLeftClick)),
                prefix: new HarmonyMethod(typeof(ModEntry), nameof(ModEntry.DialogueBox_receiveLeftClick_Prefix)),
@@ -83,12 +83,12 @@ namespace Pelican_XVASynth
                     mod: ModManifest,
                     text: () => "Voices"
                 );
-                
+
                 var voiceStrings = new Dictionary<string, string>();
                 voiceStrings.Add("none:none", "none");
                 foreach (var kvp in gameVoices.games)
                 {
-                    foreach(var v in kvp.Value)
+                    foreach (var v in kvp.Value)
                     {
                         voiceStrings[kvp.Key + ":" + v.id] = $"{v.name} ({kvp.Key})";
                     }
@@ -117,7 +117,7 @@ namespace Pelican_XVASynth
                     tooltip: () => "Only pause to prepare if the number of letters in the string is equal to or smaller than this.",
                     getValue: () => Config.MaxLettersToPrepare,
                     setValue: value => Config.MaxLettersToPrepare = value
-                ); 
+                );
 
                 bool modifiedConfig = false;
                 var characters = Helper.GameContent.Load<Dictionary<string, CharacterData>>("Data\\Characters");
@@ -134,90 +134,60 @@ namespace Pelican_XVASynth
                 {
                     Helper.WriteConfig(Config);
                 }
-                
-                // Build a master list of all voice IDs once for GMCM to use as the static array bounds
-                var allVoiceIds = new List<string> { "none" };
-                foreach (var gameKvp in gameVoices.games)
-                {
-                    foreach (var voiceModel in gameKvp.Value)
-                    {
-                        if (!allVoiceIds.Contains(voiceModel.id))
-                        {
-                            allVoiceIds.Add(voiceModel.id);
-                        }
-                    }
-                }
-                string[] staticVoiceArray = allVoiceIds.ToArray();
 
                 foreach (var kvp in characters)
                 {
-                    if (!Config.Voices.ContainsKey(kvp.Key))
-                        Config.Voices[kvp.Key] = new VoiceSetup { Game = "none", Voice = "none", Pitch = 0.0f };
-
-                    VoiceSetup characterVoice = Config.Voices[kvp.Key];
-
-                    // 1. Game Selection Dropdown
-                    var allowedGames = new List<string> { "none" };
-                    allowedGames.AddRange(gameVoices.games.Keys);
-
-                    configMenu.AddTextOption(
-                        mod: ModManifest,
-                        name: () => $"{kvp.Key} Game",
-                        tooltip: () => $"Select the voice model game database for {kvp.Key}",
-                        getValue: () => characterVoice.Game,
-                        setValue: (string value) => {
-                            characterVoice.Game = value;
-                            characterVoice.Voice = "none";
-                            Helper.WriteConfig(Config);
-                        },
-                        allowedValues: allowedGames.ToArray()
-                    );
-
-                    // 2. Voice Selection Dropdown (Using the static string array to satisfy the compiler)
                     configMenu.AddTextOption(
                         mod: ModManifest,
                         name: () => $"{kvp.Key} Voice",
-                        tooltip: () => $"Select a voice from the currently chosen game context ({characterVoice.Game})",
-                        getValue: () => characterVoice.Voice,
-                        setValue: (string value) => {
-                            characterVoice.Voice = value;
+                        getValue: () => {
+                            if (Config.Voices.ContainsKey(kvp.Key))
+                            {
+                                string keyVal = Config.Voices[kvp.Key].Game + ":" + Config.Voices[kvp.Key].Voice;
+                                return voiceStrings.ContainsKey(keyVal) ? keyVal : "none:none";
+                            }
+                            return "none:none";
+                        },
+                        setValue: delegate (string value) {
+                            var parts = value.Split(':');
+                            if (!Config.Voices.ContainsKey(kvp.Key))
+                                Config.Voices[kvp.Key] = new VoiceSetup();
+
+                            if (parts.Length != 2 || (parts[0] == "none" && parts[1] == "none"))
+                            {
+                                Config.Voices[kvp.Key].Game = "none";
+                                Config.Voices[kvp.Key].Voice = "none";
+                            }
+                            else
+                            {
+                                Config.Voices[kvp.Key].Game = parts[0];
+                                Config.Voices[kvp.Key].Voice = parts[1];
+                            }
                             Helper.WriteConfig(Config);
                         },
-                        allowedValues: staticVoiceArray,
-                        formatAllowedValue: (string value) => {
-                            if (value == "none") return "none";
-
-                            // If the model belongs to the selected game, show its clean name
-                            if (gameVoices.games.ContainsKey(characterVoice.Game))
-                            {
-                                var foundModel = gameVoices.games[characterVoice.Game].FirstOrDefault(m => m.id == value);
-                                if (foundModel != null)
-                                {
-                                    return foundModel.name;
-                                }
-                            }
-
-                            // If it belongs to a different game, append a grayed out context indicator
-                            foreach (var gameKvp in gameVoices.games)
-                            {
-                                var foundModel = gameKvp.Value.FirstOrDefault(m => m.id == value);
-                                if (foundModel != null)
-                                {
-                                    return $"{foundModel.name} [{gameKvp.Key}]";
-                                }
-                            }
-                            return value;
-                        }
+                        allowedValues: voiceStrings.Keys.ToArray(),
+                        formatAllowedValue: delegate (string value) { return voiceStrings.ContainsKey(value) ? voiceStrings[value] : "none"; }
                     );
 
-                    // 3. Pitch Slider Customizer
+                    // Fixed: GMCM handles integer sliders, converted to/from float config variables
                     configMenu.AddNumberOption(
                         mod: ModManifest,
                         name: () => $"{kvp.Key} Pitch",
                         tooltip: () => $"Alter the vocal pitch frequency for {kvp.Key} (-100 lowest to 100 highest)",
-                        getValue: () => (int)(characterVoice.Pitch * 100f),
+                        getValue: () => {
+                            if (Config.Voices.ContainsKey(kvp.Key))
+                            {
+                                // Multiply by 100 and cast to int for GMCM display
+                                return (int)(Config.Voices[kvp.Key].Pitch * 100f);
+                            }
+                            return 0;
+                        },
                         setValue: (int value) => {
-                            characterVoice.Pitch = value / 100f;
+                            if (!Config.Voices.ContainsKey(kvp.Key))
+                                Config.Voices[kvp.Key] = new VoiceSetup { Game = "none", Voice = "none" };
+
+                            // Divide by 100.0f to store as a clean decimal float in config
+                            Config.Voices[kvp.Key].Pitch = value / 100f;
                             Helper.WriteConfig(Config);
                         },
                         min: -100,
@@ -277,7 +247,7 @@ namespace Pelican_XVASynth
             if (__instance.characterDialogue.currentDialogueIndex != beforeClickDialogueIndex)
             {
                 CancelCurrentVoice();
-                
+
                 if (!__instance.transitioning)
                     PlayDialogue(__instance.characterDialogue);
             }
@@ -304,7 +274,7 @@ namespace Pelican_XVASynth
         }
 
         public static string currentDialogue = "";
-        
+
         public static void PlayDialogue(Dialogue dialogue)
         {
             if (!Config.EnableMod || dialogue.speaker == null || dialogue.dialogues[dialogue.currentDialogueIndex].Text == currentDialogue)
@@ -312,14 +282,15 @@ namespace Pelican_XVASynth
             PlayDialogue(dialogue.speaker.Name, dialogue.dialogues[dialogue.currentDialogueIndex].Text);
         }
 
-        public static void PlayDialogue(string name, string dialogue) {
+        public static void PlayDialogue(string name, string dialogue)
+        {
             if (!Config.Voices.ContainsKey(name))
             {
                 return;
             }
-            
+
             VoiceSetup voice = Config.Voices[name];
-            
+
             if (voice.Game == "none" || voice.Voice == "none")
             {
                 return;
@@ -330,13 +301,13 @@ namespace Pelican_XVASynth
                 SMonitor.Log($"Voice profiles for game '{voice.Game}' (assigned to {name}) are missing from xVASynth. Skipping synthesis.", LogLevel.Warn);
                 return;
             }
-            
+
             if (!gameVoices.games[voice.Game].Exists(v => v.id == voice.Voice))
             {
                 SMonitor.Log($"Voice model ID '{voice.Voice}' (assigned to {name}) is missing from xVASynth. Skipping synthesis.", LogLevel.Warn);
                 return;
             }
-            
+
             SendToXVASynth(voice, dialogue);
         }
 
@@ -347,7 +318,7 @@ namespace Pelican_XVASynth
             int requestId = currentRequestId;
             currentDialogue = dialogue;
             SMonitor.Log($"Sending speech {dialogue} for voice {voice.Voice}, game {voice.Game} to xVASynth (Req ID: {requestId})");
-            
+
             GameVoiceText text = new GameVoiceText()
             {
                 gameId = voice.Game,
@@ -355,12 +326,12 @@ namespace Pelican_XVASynth
                 vol = 1f,
                 text = ""
             };
-            
+
             if (File.Exists(Path.Combine(xVaSynthPath, "output.wav")))
             {
                 try { File.Delete(Path.Combine(xVaSynthPath, "output.wav")); } catch { }
             }
-            
+
             string speechPath = Path.Combine(xVaSynthPath, "xVASynthText.json");
             using (StreamWriter file = File.CreateText(speechPath))
             {
@@ -374,7 +345,7 @@ namespace Pelican_XVASynth
             {
                 await Task.Delay(Config.MillisecondsPrepare);
             }
-            
+
             if (requestId != currentRequestId)
                 return;
 
@@ -384,7 +355,7 @@ namespace Pelican_XVASynth
                 JsonSerializer serializer = new JsonSerializer();
                 serializer.Serialize(file, text);
             }
-            
+
             CheckForWav(requestId, 0, voice.Pitch);
         }
 
@@ -415,7 +386,8 @@ namespace Pelican_XVASynth
                     CheckForWav(requestId, currentTicks, pitch);
                     return;
                 }
-                catch (Exception e) {
+                catch (Exception e)
+                {
                     SMonitor.Log($"Error processing audio: {e.Message}", LogLevel.Error);
                 }
 
@@ -434,10 +406,11 @@ namespace Pelican_XVASynth
                         activeVoiceInstance.Pitch = Math.Max(-1.0f, Math.Min(1.0f, pitch));
                         activeVoiceInstance.Play();
                     }
-                    catch (Exception e) {
+                    catch (Exception e)
+                    {
                         SMonitor.Log($"Error playing sound instance: {e.Message}", LogLevel.Error);
                     }
-                    
+
                     try { File.Delete(wavPath); } catch { }
                 }
                 return;
@@ -445,7 +418,7 @@ namespace Pelican_XVASynth
 
             await Task.Delay(100);
             currentTicks++;
-            
+
             if (currentTicks / 10f > Config.MaxSecondsWait)
             {
                 if (requestId == currentRequestId)
@@ -455,7 +428,7 @@ namespace Pelican_XVASynth
                 }
                 return;
             }
-            
+
             CheckForWav(requestId, currentTicks, pitch);
         }
     }
