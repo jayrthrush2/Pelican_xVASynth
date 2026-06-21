@@ -189,26 +189,36 @@ namespace Pelican_XVASynth
             PlayDialogue(dialogue);
         }
 
+        // State tracking variable
+        private static int beforeClickDialogueIndex = -1;
+
         public static void DialogueBox_receiveLeftClick_Prefix(DialogueBox __instance)
         {
             if (__instance.transitioning || __instance.characterDialogue == null)
                 return;
 
-            // Use SMAPI Reflection to safely access the private 'characterIndex' field
-            int characterIndex = SHelper.Reflection.GetField<int>(__instance, "characterIndex").GetValue();
-
-            // If characterIndex has reached or passed the text length, it's fully displayed.
-            // Clicking now will advance the page or close the dialogue box entirely.
-            if (__instance.currentDialogueString != null && characterIndex >= __instance.currentDialogueString.Length)
-            {
-                CancelCurrentVoice();
-            }
+            // Record the page index before the click is processed
+            beforeClickDialogueIndex = __instance.characterDialogue.currentDialogueIndex;
         }
 
         public static void DialogueBox_receiveLeftClick_Postfix(DialogueBox __instance)
         {
-            if (!__instance.transitioning && __instance.characterDialogue != null)
-                PlayDialogue(__instance.characterDialogue);
+            // Scenario A: Dialogue box closed entirely or dialogue reference was cleared
+            if (__instance.characterDialogue == null)
+            {
+                CancelCurrentVoice();
+                return;
+            }
+
+            // Scenario B: Dialogue advanced to a new page
+            if (__instance.characterDialogue.currentDialogueIndex != beforeClickDialogueIndex)
+            {
+                CancelCurrentVoice();
+                
+                if (!__instance.transitioning)
+                    PlayDialogue(__instance.characterDialogue);
+            }
+            // Scenario C: Click just finished text scrolling on the same page -> Do nothing, let audio continue
         }
 
         public static void CancelCurrentVoice()
