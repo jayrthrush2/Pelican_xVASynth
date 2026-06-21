@@ -135,6 +135,20 @@ namespace Pelican_XVASynth
                     Helper.WriteConfig(Config);
                 }
                 
+                // Build a master list of all voice IDs once for GMCM to use as the static array bounds
+                var allVoiceIds = new List<string> { "none" };
+                foreach (var gameKvp in gameVoices.games)
+                {
+                    foreach (var voiceModel in gameKvp.Value)
+                    {
+                        if (!allVoiceIds.Contains(voiceModel.id))
+                        {
+                            allVoiceIds.Add(voiceModel.id);
+                        }
+                    }
+                }
+                string[] staticVoiceArray = allVoiceIds.ToArray();
+
                 foreach (var kvp in characters)
                 {
                     if (!Config.Voices.ContainsKey(kvp.Key))
@@ -153,44 +167,43 @@ namespace Pelican_XVASynth
                         getValue: () => characterVoice.Game,
                         setValue: (string value) => {
                             characterVoice.Game = value;
-                            // Reset the voice to none if the game changes to avoid cross-game config corruption
                             characterVoice.Voice = "none";
                             Helper.WriteConfig(Config);
                         },
                         allowedValues: allowedGames.ToArray()
                     );
 
-                    // 2. Dynamic Voice Selection Dropdown based on chosen Game
+                    // 2. Voice Selection Dropdown (Using the static string array to satisfy the compiler)
                     configMenu.AddTextOption(
                         mod: ModManifest,
                         name: () => $"{kvp.Key} Voice",
-                        tooltip: () => $"Select the specific xVASynth voice model from {characterVoice.Game}",
+                        tooltip: () => $"Select a voice from the currently chosen game context ({characterVoice.Game})",
                         getValue: () => characterVoice.Voice,
                         setValue: (string value) => {
                             characterVoice.Voice = value;
                             Helper.WriteConfig(Config);
                         },
-                        allowedValues: () => {
-                            // Dynamically build the allowed model IDs list based on the currently selected game
-                            var allowedModels = new List<string> { "none" };
-                            if (gameVoices.games.ContainsKey(characterVoice.Game))
-                            {
-                                foreach (var model in gameVoices.games[characterVoice.Game])
-                                {
-                                    allowedModels.Add(model.id);
-                                }
-                            }
-                            return allowedModels.ToArray();
-                        },
+                        allowedValues: staticVoiceArray,
                         formatAllowedValue: (string value) => {
                             if (value == "none") return "none";
-                            // Human-readable lookup: returns "Model Name" instead of the raw internal "model_id" string
+
+                            // If the model belongs to the selected game, show its clean name
                             if (gameVoices.games.ContainsKey(characterVoice.Game))
                             {
                                 var foundModel = gameVoices.games[characterVoice.Game].FirstOrDefault(m => m.id == value);
                                 if (foundModel != null)
                                 {
                                     return foundModel.name;
+                                }
+                            }
+
+                            // If it belongs to a different game, append a grayed out context indicator
+                            foreach (var gameKvp in gameVoices.games)
+                            {
+                                var foundModel = gameKvp.Value.FirstOrDefault(m => m.id == value);
+                                if (foundModel != null)
+                                {
+                                    return $"{foundModel.name} [{gameKvp.Key}]";
                                 }
                             }
                             return value;
