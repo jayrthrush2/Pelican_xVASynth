@@ -1,4 +1,4 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using Microsoft.Xna.Framework.Audio;
 using Newtonsoft.Json;
 using StardewModdingAPI;
@@ -17,7 +17,6 @@ namespace Pelican_XVASynth
     /// <summary>The mod entry point.</summary>
     public partial class ModEntry : Mod
     {
-
         public static IMonitor SMonitor;
         public static IModHelper SHelper;
         public static ModConfig Config;
@@ -28,6 +27,8 @@ namespace Pelican_XVASynth
         public static GameVoices gameVoices = new GameVoices();
         public static readonly string xVaSynthPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "xVASynth", "realTimeTTS");
         public static SoundEffect voiceSound;
+        public static SoundEffectInstance activeVoiceInstance; // Track active audio playback
+        public static int currentRequestId = 0; // Track active request session
         public static Dictionary<string, GameVoice> voiceDict = new Dictionary<string, GameVoice>();
 
         /// <summary>The mod entry point, called after the mod is first loaded.</summary>
@@ -52,19 +53,15 @@ namespace Pelican_XVASynth
                original: AccessTools.Constructor(typeof(DialogueBox), new Type[] { typeof(Dialogue) }),
                postfix: new HarmonyMethod(typeof(ModEntry), nameof(ModEntry.DialogueBox_Ctor_Postfix))
             );
+            
+            // Added Prefix to intercept skips before dialogue advances or closes
             harmony.Patch(
                original: AccessTools.Method(typeof(DialogueBox), nameof(DialogueBox.receiveLeftClick)),
+               prefix: new HarmonyMethod(typeof(ModEntry), nameof(ModEntry.DialogueBox_receiveLeftClick_Prefix)),
                postfix: new HarmonyMethod(typeof(ModEntry), nameof(ModEntry.DialogueBox_receiveLeftClick_Postfix))
             );
-            /*
-            harmony.Patch(
-               original: AccessTools.Method(typeof(NPC), nameof(NPC.showTextAboveHead)),
-               postfix: new HarmonyMethod(typeof(ModEntry), nameof(ModEntry.NPC_showTextAboveHead_Prefix))
-            );
-            */
         }
 
-        /// private void GameLoop_GameLaunched(object sender, StardewModdingAPI.Events.GameLaunchedEventArgs e)
         private void GameLoop_OneSecondUpdateTicked(object sender, OneSecondUpdateTickedEventArgs e)
         {
             LoadGameVoices();
@@ -72,8 +69,6 @@ namespace Pelican_XVASynth
             var configMenu = Helper.ModRegistry.GetApi<IGenericModConfigMenuApi>("spacechase0.GenericModConfigMenu");
             if (configMenu != null)
             {
-
-                // register mod
                 configMenu.Register(
                     mod: ModManifest,
                     reset: () => Config = new ModConfig(),
@@ -99,28 +94,6 @@ namespace Pelican_XVASynth
                     }
                 }
                 Monitor.Log($"list of {voiceStrings.Count} game voices");
-                /*
-                                foreach (var kvp in Helper.GameContent.Load<Dictionary<string, string>>("Data\\Characters"))
-                                {
-                                    configMenu.AddTextOption(
-                                        mod: ModManifest,
-                                        name: () => kvp.Key,
-                                        getValue: () => voiceDict.ContainsKey(kvp.Key) ? voiceDict[kvp.Key].game + ":" + voiceDict[kvp.Key].id : "",
-                                        setValue: delegate(string value) { 
-                                            var parts = value.Split(':'); 
-                                            if (parts.Length != 2) 
-                                            { 
-                                                voiceDict.Remove(kvp.Key); 
-                                                return; 
-                                            } 
-                                            voiceDict[kvp.Key] = new GameVoice(parts[0], parts[1]); 
-                                            SaveGameVoices(); 
-                                        },
-                                        allowedValues: voiceStrings.Keys.ToArray(),
-                                        formatAllowedValue: delegate(string value) { return voiceStrings[value]; } 
-                                    );
-                                }
-                */
 
                 configMenu.AddNumberOption(
                     mod: ModManifest,
@@ -215,24 +188,55 @@ namespace Pelican_XVASynth
         {
             PlayDialogue(dialogue);
         }
+
+        public static void DialogueBox_receiveLeftClick_Prefix(DialogueBox __instance)
+        {
+            if (__instance.transitioning || __instance.characterDialogue == null)
+                return;
+
+            // If characterIndex has reached or passed the text length, it's fully displayed.
+            // Clicking now will advance the page or close the dialogue box entirely.
+            if (__instance.characterIndex >= __instance.currentDialogueString.Length)
+            {
+                CancelCurrentVoice();
+            }
+        }
+
         public static void DialogueBox_receiveLeftClick_Postfix(DialogueBox __instance)
         {
             if(!__instance.transitioning && __instance.characterDialogue != null)
                 PlayDialogue(__instance.characterDialogue);
         }
-        public static void NPC_showTextAboveHead_Prefix(NPC __instance, string Text)
+
+        public static void CancelCurrentVoice()
         {
-            if (!Config.EnableMod)
-                return;
-            PlayDialogue(__instance.Name, Text);
+            currentRequestId++; // Invalidates any older running CheckForWav loops
+            currentDialogue = "";
+
+            if (activeVoiceInstance != null)
+            {
+                try
+                {
+                    if (activeVoiceInstance.State == SoundState.Playing)
+                    {
+                        activeVoiceInstance.Stop();
+                    }
+                    activeVoiceInstance.Dispose();
+                }
+                catch (Exception) { }
+                activeVoiceInstance = null;
+            }
         }
+
         public static string currentDialogue = "";
+        
         public static void PlayDialogue(Dialogue dialogue)
         {
             if (!Config.EnableMod || dialogue.speaker == null || dialogue.dialogues[dialogue.currentDialogueIndex].Text == currentDialogue)
                 return;
             PlayDialogue(dialogue.speaker.Name, dialogue.dialogues[dialogue.currentDialogueIndex].Text);
         }
+
         public static void PlayDialogue(string name, string dialogue) {
             if (!voiceDict.ContainsKey(name))
             {
@@ -253,8 +257,13 @@ namespace Pelican_XVASynth
 
         private static async void SendToXVASynth(GameVoice voice, string dialogue)
         {
+            // Cancel any active line before submitting a new request
+            CancelCurrentVoice();
+
+            int requestId = currentRequestId;
             currentDialogue = dialogue;
-            SMonitor.Log($"Sending speech {dialogue} for voice {voice.id}, game {voice.game} to xVASynth");
+            SMonitor.Log($"Sending speech {dialogue} for voice {voice.id}, game {voice.game} to xVASynth (Req ID: {requestId})");
+            
             GameVoiceText text = new GameVoiceText()
             {
                 gameId = voice.game,
@@ -262,10 +271,12 @@ namespace Pelican_XVASynth
                 vol = 1f,
                 text = ""
             };
+            
             if (File.Exists(Path.Combine(xVaSynthPath, "output.wav")))
             {
-                File.Delete(Path.Combine(xVaSynthPath, "output.wav"));
+                try { File.Delete(Path.Combine(xVaSynthPath, "output.wav")); } catch { }
             }
+            
             string speechPath = Path.Combine(xVaSynthPath, "xVASynthText.json");
             using (StreamWriter file = File.CreateText(speechPath))
             {
@@ -277,44 +288,76 @@ namespace Pelican_XVASynth
 
             if (dialogue.Length <= Config.MaxLettersToPrepare && Config.MillisecondsPrepare > 0)
             {
-
                 await Task.Delay(Config.MillisecondsPrepare);
             }
+            
+            // Double check if canceled during the delay
+            if (requestId != currentRequestId)
+                return;
+
             text.text = dialogue;
             using (StreamWriter file = File.CreateText(speechPath))
             {
                 JsonSerializer serializer = new JsonSerializer();
                 serializer.Serialize(file, text);
             }
-            ticks = 0;
-            CheckForWav();
+            
+            CheckForWav(requestId, 0);
         }
 
-        public static int ticks = 0;
-        public static bool playing = false;
-        public static async void CheckForWav()
+        public static async void CheckForWav(int requestId, int currentTicks)
         {
-            if(File.Exists(Path.Combine(xVaSynthPath, "output.wav")))
+            string wavPath = Path.Combine(xVaSynthPath, "output.wav");
+            if (File.Exists(wavPath))
             {
-                SMonitor.Log($"Playing output.wav file");
-                FileStream fs = new FileStream(Path.Combine(xVaSynthPath, "output.wav"), FileMode.Open);
-                voiceSound = SoundEffect.FromStream(fs);
-                fs.Dispose();
-                voiceSound.Play();
-                File.Delete(Path.Combine(xVaSynthPath, "output.wav"));
-                currentDialogue = "";
-                return;
-            }
-            await Task.Delay(100);
-            ticks++;
-            if (++ticks / 10f > Config.MaxSecondsWait)
-            {
-                SMonitor.Log($"Timeout waiting for output.wav file");
-                currentDialogue = "";
-                return;
-            }
-            CheckForWav();
-        }
+                // If the dialogue was skipped/changed while this file was generating,
+                // delete it immediately so it doesn't clutter or conflict with newer requests.
+                if (requestId != currentRequestId)
+                {
+                    try { File.Delete(wavPath); } catch { }
+                    return;
+                }
 
+                SMonitor.Log($"Playing output.wav file");
+                try
+                {
+                    using (FileStream fs = new FileStream(wavPath, FileMode.Open, FileAccess.Read))
+                    {
+                        voiceSound = SoundEffect.FromStream(fs);
+                    }
+                    
+                    if (requestId != currentRequestId)
+                    {
+                        try { File.Delete(wavPath); } catch { }
+                        return;
+                    }
+
+                    activeVoiceInstance = voiceSound.CreateInstance();
+                    activeVoiceInstance.Play();
+                }
+                catch (Exception e)
+                {
+                    SMonitor.Log($"Error processing audio: {e.Message}", LogLevel.Error);
+                }
+                
+                try { File.Delete(wavPath); } catch { }
+                return;
+            }
+
+            await Task.Delay(100);
+            currentTicks++;
+            
+            if (currentTicks / 10f > Config.MaxSecondsWait)
+            {
+                if (requestId == currentRequestId)
+                {
+                    SMonitor.Log($"Timeout waiting for output.wav file");
+                    currentDialogue = "";
+                }
+                return;
+            }
+            
+            CheckForWav(requestId, currentTicks);
+        }
     }
 }
