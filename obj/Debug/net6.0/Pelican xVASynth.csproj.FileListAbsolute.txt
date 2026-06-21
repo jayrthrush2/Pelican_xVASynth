@@ -1,0 +1,10 @@
+C:\Users\jayrt\source\repos\Pelican xVASynth\obj\Debug\net6.0\Pelican xVASynth.csproj.AssemblyReference.cache
+C:\Users\jayrt\source\repos\Pelican xVASynth\obj\Debug\net6.0\Pelican_xVASynth.Properties.Resources.resources
+C:\Users\jayrt\source\repos\Pelican xVASynth\obj\Debug\net6.0\Pelican xVASynth.csproj.GenerateResource.cache
+C:\Users\jayrt\source\repos\Pelican xVASynth\obj\Debug\net6.0\Pelican xVASynth.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\jayrt\source\repos\Pelican xVASynth\obj\Debug\net6.0\Pelican xVASynth.AssemblyInfoInputs.cache
+C:\Users\jayrt\source\repos\Pelican xVASynth\obj\Debug\net6.0\Pelican xVASynth.AssemblyInfo.cs
+C:\Users\jayrt\source\repos\Pelican xVASynth\obj\Debug\net6.0\Pelican xVASynth.csproj.CoreCompileInputs.cache
+C:\Users\jayrt\source\repos\Pelican xVASynth\bin\Debug\net6.0\Pelican xVASynth.deps.json
+C:\Users\jayrt\source\repos\Pelican xVASynth\bin\Debug\net6.0\Pelican xVASynth.dll
+C:\Users\jayrt\source\repos\Pelican xVASynth\obj\Debug\net6.0\Pelican xVASynth.dll

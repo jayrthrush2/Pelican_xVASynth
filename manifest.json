@@ -1,0 +1,9 @@
+﻿{
+  "Name": "Pelican xVASynth",
+  "Author": "Nahlbrii",
+  "Version": "0.2.7",
+  "Description": "xVASynth Text to Speech",
+  "UniqueID": "Nahlbrii.Pelican_XVASynth",
+  "EntryDll": "Pelican XVASynth.dll",
+  "MinimumApiVersion": "4.4.0"
+}
