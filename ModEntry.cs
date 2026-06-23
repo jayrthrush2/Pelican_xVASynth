@@ -79,10 +79,6 @@ namespace Pelican_XVASynth
                     getValue: () => Config.EnableMod,
                     setValue: value => Config.EnableMod = value
                 );
-                configMenu.AddSectionTitle(
-                    mod: ModManifest,
-                    text: () => "Voices"
-                );
 
                 var voiceStrings = new Dictionary<string, string>();
                 voiceStrings.Add("none:none", "none");
@@ -117,6 +113,10 @@ namespace Pelican_XVASynth
                     tooltip: () => "Only pause to prepare if the number of letters in the string is equal to or smaller than this.",
                     getValue: () => Config.MaxLettersToPrepare,
                     setValue: value => Config.MaxLettersToPrepare = value
+                );
+                configMenu.AddSectionTitle(
+                    mod: ModManifest,
+                    text: () => "Voices"
                 );
 
                 bool modifiedConfig = false;
